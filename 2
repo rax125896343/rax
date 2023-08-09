@@ -1,0 +1,104 @@
+from google.colab import drive
+drive.mount("/content/drive")
+#!conda install pytorch==1.13.1 torchvision==0.14.1 torchaudio==0.13.1 cpuonly -c pytorch
+!pip install minicons -i https://pypi.tuna.tsinghua.edu.cn/simple
+!pip install scipy -i https://pypi.tuna.tsinghua.edu.cn/simple
+with open('/content/drive/My Drive/11/Emmanuele_Chersoni/bcws.txt', 'r', encoding='utf-8') as rf:
+    lines = rf.readlines()
+    # take a look at the first 4 rows
+    for i in range(4):
+      print(lines[i].strip())
+import re
+import pandas as pd
+def extract_delete(s):
+    s = s.strip()
+    results = re.search(r'<(.*?)>', s)
+    target = results.groups()[0]
+    span = results.span()
+    s_ = s[:span[0]]+target+s[span[1]:]
+    return target, s_
+
+POS, cn_sentences, en_sentences, avg_ratings, cn_targets, en_targets = [],[],[],[],[],[]
+for i in range(0,len(lines),4):
+    POS.append(lines[i].strip())
+    cn_tar, cn_seq = extract_delete(lines[i+1])
+    cn_targets.append(cn_tar)
+    cn_sentences.append(cn_seq)
+
+    en_tar, en_seq = extract_delete(lines[i+2])
+    en_targets.append(en_tar)
+    en_sentences.append(en_seq)
+    avg_ratings.append(float(lines[i+3].split(' ')[-1]))
+
+d = {'zh_sentence':cn_sentences, 'en_sentence':en_sentences,
+     'zh_word':cn_targets, 'en_word':en_targets,
+     'rating':avg_ratings, 'POS': POS}
+
+df = pd.DataFrame(data=d)
+print(df)
+
+from minicons import cwe
+
+def extract_vector(inputs, model):
+  vectors = []
+  for i in range(len(inputs)):
+    vec = model.extract_representation(inputs[i], layer=12)
+    vectors.append(vec.squeeze(0).numpy())
+
+  return vectors
+
+model = cwe.CWE('bert-base-multilingual-cased')
+
+zh_inputs = df[['zh_sentence', 'zh_word']].values.tolist()[:30]
+en_inputs = df[['en_sentence', 'en_word']].values.tolist()[:30]
+zh_vectors = extract_vector(zh_inputs, model)
+en_vectors = extract_vector(en_inputs, model)
+
+# # select the first sentence when the codes work slowly
+# # zh_inputs and en_inputs consist of 2091 sentences individually
+# zh_vec = model.extract_representation(zh_inputs[0], layer=12)
+# en_vec = model.extract_representation(en_inputs[0], layer=12)
+print(zh_vectors[0])
+
+import numpy as np
+from scipy.stats import pearsonr, spearmanr
+
+
+def cosine_sim(v_1, v_2):
+  score = np.dot(v_1, v_2) / (np.linalg.norm(v_1) * np.linalg.norm(v_2))
+  return score.item(0)
+
+# similarity calculated on cosine distance
+def calculate_sim_scores(zh_vectors, en_vectors):
+    sim_scores = []
+    for i in range(len(zh_vectors)):
+        score = cosine_sim(zh_vectors[i], en_vectors[i])
+        sim_scores.append(score)
+
+    return sim_scores
+
+# similarity calculatd on spearman correlation
+def calculate_spearman_scores(zh_vectors, en_vectors):
+    spearman_scores = []
+    for i in range(len(zh_vectors)):
+        score = spearmanr(zh_vectors[i], en_vectors[i]).statistic
+        spearman_scores.append(score)
+
+    return spearman_scores
+
+sim_scores = calculate_sim_scores(zh_vectors, en_vectors)
+spearman_scores = calculate_spearman_scores(zh_vectors, en_vectors)
+
+print(len(sim_scores),sim_scores)
+print(len(spearman_scores),spearman_scores)
+
+ratings = df['rating'].values.tolist()
+
+
+# based on cosine similarity
+pearsonR = pearsonr(ratings[:30], sim_scores)
+# # based on spearman correlation
+spearmanR = spearmanr(ratings[:30], sim_scores)
+
+print (pearsonR[0])
+print (spearmanR[0])
